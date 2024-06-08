@@ -5,7 +5,9 @@ import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-import pycountry 
+import pycountry
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
 # Load the data
 all_time = pd.read_csv("UCL_AllTime_Performance_Table.csv")
@@ -26,11 +28,12 @@ finals.columns = [to_snake_case(col) for col in finals.columns]
 all_time.columns = ['#', 'Team', 'Matches', 'Wins', 'Draws', 'Losses', 'Goals', 'Goal_Difference', 'Points']
 all_time.columns = [to_snake_case(col) for col in all_time.columns]
 
-# Process 'Score' and 'Attendance' columns
-score_split = finals['score'].str.split('–', expand=True)
-finals['winners_score'] = score_split[0].astype(int)
-finals['runners_up_score'] = score_split[1].astype(int)
-finals['attendance'] = finals['attendance'].str.replace(',', '').astype(float)
+# Define function to extract goals
+def extract_goals(goals):
+    return goals.split(':')[0]
+
+# Apply function to extract goals
+all_time['goals'] = all_time['goals'].apply(extract_goals)
 
 # Calculate year before using it in the sidebar
 finals['year'] = finals['season'].apply(lambda x: int(x.split('–')[0])) + 1
@@ -105,7 +108,6 @@ st.sidebar.write(f"- **Empates:** {team_info['draws']}")
 st.sidebar.write(f"- **Derrotas:** {team_info['losses']}")
 st.sidebar.write(f"- **Goles:** {team_info['goals']}")
 st.sidebar.write(f"- **Diferencia de Goles:** {team_info['goal_difference']}")
-st.sidebar.write(f"- **Puntos:** {team_info['points']}")
 trophies = len(finals[finals['winners'] == selected_team])
 st.sidebar.write(f"- **Títulos:** {trophies}")
 
@@ -124,41 +126,7 @@ fig.update_layout(xaxis_title='Year', yaxis_title='Attendance')
 fig.add_annotation(x=2020, y=0, text="Covid-19 Pandemic", showarrow=True, arrowhead=2, bgcolor="red", font=dict(color="white"), bordercolor="red", borderwidth=2, borderpad=2, arrowcolor="red", ax=-90, ay=-10)
 st.plotly_chart(fig)
 
-
-# Mean Attendance per Decade
-bins = [1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030]
-labels = ['1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s']
-finals['decade'] = pd.cut(finals['year'], bins=bins, labels=labels, right=False)
-mean_attendance_per_decade = finals.groupby('decade')['attendance'].mean().reset_index()
-heatmap_data = mean_attendance_per_decade.set_index('decade').T
-
-# Mean Attendance per Decade
-st.subheader("Mean Attendance per Decade")
-fig, ax = plt.subplots(figsize=(10, 2))
-sns.heatmap(heatmap_data, annot=True, fmt=".3f", cmap="YlGnBu", cbar=True, cbar_kws={'orientation': 'horizontal'}, ax=ax)
-ax.set_title('Mean Attendance per Decade')
-ax.set_xlabel('Decade')
-ax.set_ylabel('')
-st.pyplot(fig)
-
-# Same Country Influence on Attendance
-#finals['same_country'] = finals.apply(lambda row: 1 if row['country_winners'] in row['venue'] or row['country_runners_up'] in row['venue'] else 0, axis=1)
-#st.subheader("Attendance by Same Country")
-#fig.update_layout(xaxis_title='Same Country', yaxis_title='Attendance')
-#st.plotly_chart(fig)
-
-# Hypothesis Test
-#attendance_same_country = finals[finals['same_country'] == 1]['attendance']
-#attendance_different_country = finals[finals['same_country'] == 0]['attendance']
-#st.write(f'T-statistic: {t_stat:.3f}')
-#st.write(f'P-value: {p_value:.3f}')
-
-# Mean Attendance by Country Venue
-#other_country = finals[finals['same_country'] == 0]
-#other_country['country_venue'] = other_country['venue'].apply(lambda x: x.split(',')[-1].strip())
-#mean_attendance_by_country = other_country.groupby('country_venue')['attendance'].mean().sort_values(ascending=False).head(10).reset_index()
-#st.subheader("Mean Attendance by Country Venue (Top 10)")
-#st.plotly_chart(fig)
+#...
 
 # Wins vs Losses Scatter Plot
 st.subheader("Wins vs Losses Scatter Plot by Team")
@@ -185,9 +153,124 @@ fig.add_trace(go.Bar(y=top10_wl_ratio['team'], x=top10_wl_ratio['draws'], name='
 fig.update_layout(barmode='stack', title='Top 10 Teams by Wins, Losses, and Draws', xaxis_title='Matches', yaxis_title='Team')
 st.plotly_chart(fig)
 
-# Finals Goal Difference Over Years
-finals['goal_difference'] = abs(finals['winners_score'] - finals['runners_up_score'])
-st.subheader("Goal Difference in Finals Over the Years")
-fig = px.line(finals, x='year', y='goal_difference', title='Goal Difference in Finals Over the Years', labels={'year': 'Year', 'goal_difference': 'Goal Difference'})
-fig.update_layout(xaxis_title='Year', yaxis_title='Goal Difference')
-st.plotly_chart(fig)
+# Binary Classification Model
+st.sidebar.subheader("Binary Classification Model")
+team1 = st.sidebar.selectbox("Select Team 1", teams)
+team2 = st.sidebar.selectbox("Select Team 2", teams)
+
+# Define the visualization options
+visualization_options = st.sidebar.multiselect("Select Visualization", ["Radar Chart", "Line Chart", "Scatter Plot", "Heatmap"])
+
+if st.sidebar.button("Predict Winner"):
+    # Data Preparation
+    team1_data = all_time[all_time['team'] == team1].squeeze()[['wins', 'losses', 'draws', 'goals', 'goal_difference']].astype(float)
+    team2_data = all_time[all_time['team'] == team2].squeeze()[['wins', 'losses', 'draws', 'goals', 'goal_difference']].astype(float)
+    teams_data = pd.concat([team1_data, team2_data], axis=1).T
+    
+    # Train the model
+    X = all_time[['wins', 'losses', 'draws', 'goals', 'goal_difference']].astype(float)
+    y = all_time['trophies']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestClassifier()
+    model.fit(X_train, y_train)
+    
+    # Predict
+    winner = model.predict(teams_data)
+    winning_team = team1 if winner[0] == 1 else team2
+    
+    # Display prediction
+    st.sidebar.write(f"Prediction: The winner is {winning_team}")
+
+    # Display selected visualizations
+    if "Radar Chart" in visualization_options:
+        # Radar Chart
+        st.subheader(f"Performance Comparison: {team1} vs {team2}")
+        categories = ['wins', 'losses', 'draws', 'goals', 'goal_difference']
+        team1_values = team1_data.values.tolist()
+        team2_values = team2_data.values.tolist()
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatterpolar(
+            r=team1_values,
+            theta=categories,
+            fill='toself',
+            name=team1,
+            line=dict(color='black')
+        ))
+        fig.add_trace(go.Scatterpolar(
+            r=team2_values,
+            theta=categories,
+            fill='toself',
+            name=team2,
+            line=dict(color='red')
+        ))
+
+        max_value = max(max(map(float, team1_values)), max(map(float, team2_values)))
+
+        fig.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, max_value]
+                )),
+            showlegend=True
+        )
+
+        st.plotly_chart(fig)
+
+    if "Line Chart" in visualization_options:
+        # Line Chart
+        st.subheader(f"Line Chart: {team1} vs {team2}")
+        categories = ['wins', 'losses', 'draws', 'goals', 'goal_difference']
+        team1_values = team1_data.values.tolist()
+        team2_values = team2_data.values.tolist()
+        line_data = pd.DataFrame({
+            'Category': categories,
+            team1: team1_values,
+            team2: team2_values
+        })
+
+        fig = px.line(line_data, x='Category', y=[team1, team2], markers=True, color_discrete_map={team1: 'black', team2: 'red'})
+        fig.update_layout(title='Performance Line Chart', xaxis_title='Category', yaxis_title='Values')
+        st.plotly_chart(fig)
+
+    if "Scatter Plot" in visualization_options:
+        # Scatter Plot
+        st.subheader(f"Scatter Plot: {team1} vs {team2}")
+        categories = ['wins', 'losses', 'draws', 'goals', 'goal_difference']
+        team1_values = team1_data.values.tolist()
+        team2_values = team2_data.values.tolist()
+        scatter_data = pd.DataFrame({
+            'Category': categories * 2,
+            'Values': team1_values + team2_values,
+            'Team': [team1] * len(categories) + [team2] * len(categories)
+        })
+
+        # Filtrar valores negativos en la columna 'Values'
+        scatter_data = scatter_data[scatter_data['Values'] > 0]
+
+        fig = px.scatter(scatter_data, x='Category', y='Values', color='Team', symbol='Team', size='Values', color_discrete_map={team1: 'black', team2: 'red'})
+        fig.update_layout(title='Performance Scatter Plot', xaxis_title='Category', yaxis_title='Values')
+        st.plotly_chart(fig)
+
+    if "Heatmap" in visualization_options:
+        # Heatmap
+        st.subheader(f"Heatmap: {team1} vs {team2}")
+        categories = ['wins', 'losses', 'draws', 'goals', 'goal_difference']
+        team1_values = team1_data.values.tolist()
+        team2_values = team2_data.values.tolist()
+        heatmap_data = pd.DataFrame({
+            team1: team1_values,
+            team2: team2_values
+        }, index=categories)
+
+        fig = go.Figure(data=go.Heatmap(
+            z=heatmap_data.values,
+            x=heatmap_data.columns,
+            y=heatmap_data.index,
+            colorscale='Viridis'
+        ))
+
+        fig.update_layout(title='Performance Heatmap', xaxis_title='Team', yaxis_title='Category')
+        st.plotly_chart(fig)
