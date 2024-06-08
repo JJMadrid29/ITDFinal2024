@@ -5,3 +5,4 @@ seaborn
 matplotlib
 scipy
 pycountry
+scikit-learn
